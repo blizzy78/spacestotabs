@@ -3,24 +3,13 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
-	"text/scanner"
-
-	flag "github.com/spf13/pflag"
 )
-
-type flags struct {
-	tabSize int
-	quiet   bool
-	paths   []string
-}
 
 type line struct {
 	spaces int
@@ -45,6 +34,12 @@ func main() {
 	}
 }
 
+func log(flags flags, p string, args ...interface{}) {
+	if !flags.quiet {
+		fmt.Printf(p, args...)
+	}
+}
+
 func convertFile(path string, flags flags) error {
 	lines, err := readFile(path)
 	if err != nil {
@@ -63,9 +58,11 @@ func convertFile(path string, flags flags) error {
 
 	newLines, linesRemaining := convert(lines, size)
 
-	err = writeFile(path, newLines)
-	if err != nil {
-		return err
+	if !flags.dryRun {
+		err = writeFile(path, newLines)
+		if err != nil {
+			return err
+		}
 	}
 
 	sizeText := strconv.Itoa(size)
@@ -78,104 +75,6 @@ func convertFile(path string, flags flags) error {
 	return nil
 }
 
-func parseFlags() flags {
-	flags := flags{}
-
-	flag.IntVarP(&flags.tabSize, "size", "s", 0, "Specify an exact tab size to use. 0 switches to auto mode (default.)")
-	flag.BoolVarP(&flags.quiet, "quiet", "q", false, "Suppress output.")
-
-	flag.CommandLine.Init("", flag.ContinueOnError)
-	err := flag.CommandLine.Parse(os.Args[1:])
-	if err == flag.ErrHelp {
-		os.Exit(0)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
-
-	flags.paths = flag.Args()
-	if len(flags.paths) <= 0 {
-		fmt.Fprintln(os.Stderr, "No files given, exiting.")
-		os.Exit(1)
-	}
-
-	return flags
-}
-
-func log(flags flags, p string, args ...interface{}) {
-	if !flags.quiet {
-		fmt.Printf(p, args...)
-	}
-}
-
-func writeFile(path string, lines []string) error {
-	b := strings.Builder{}
-	for _, l := range lines {
-		b.WriteString(l)
-	}
-
-	return ioutil.WriteFile(path, []byte(b.String()), 0644)
-}
-
-func convert(lines []line, tabSize int) ([]string, int) {
-	newLines := []string{}
-
-	linesRemaining := 0
-
-	for _, l := range lines {
-		n := l.spaces / tabSize
-		newLines = append(newLines, strings.Repeat("\t", n)+string([]rune(l.text)[n*tabSize:]))
-
-		if l.spaces > n*tabSize {
-			linesRemaining++
-		}
-	}
-
-	return newLines, linesRemaining
-}
-
-func calcTabSize(lines []line) int {
-	spacesFound := false
-	for _, l := range lines {
-		if l.spaces > 0 {
-			spacesFound = true
-			break
-		}
-	}
-	if !spacesFound {
-		return -1
-	}
-
-	type tabSize struct {
-		size  int
-		lines int
-	}
-
-	sizes := []tabSize{}
-	for s := 10; s >= 2; s-- {
-		c := 0
-		for _, l := range lines {
-			if l.spaces%s == 0 {
-				c++
-			}
-		}
-
-		sizes = append(sizes, tabSize{
-			size:  s,
-			lines: c,
-		})
-	}
-
-	sort.SliceStable(sizes, func(a, b int) bool {
-		s1 := sizes[a]
-		s2 := sizes[b]
-		return s1.lines > s2.lines
-	})
-
-	return sizes[0].size
-}
-
 func readFile(path string) ([]line, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -186,18 +85,16 @@ func readFile(path string) ([]line, error) {
 		_ = file.Close()
 	}()
 
+	return readLines(file)
+}
+
+func readLines(r io.Reader) ([]line, error) {
 	lines := []line{}
 
-	s := newScanner(file)
+	s := newScanner(r)
 	for s.Scan() {
 		t := s.Text()
-
-		var sp int
-		sp, err = countSpaces(t)
-		if err != nil {
-			return nil, err
-		}
-
+		sp := countSpaces(t)
 		lines = append(lines, line{
 			spaces: sp,
 			text:   t,
@@ -207,38 +104,13 @@ func readFile(path string) ([]line, error) {
 	return lines, s.Err()
 }
 
-func countSpaces(s string) (int, error) {
-	c := 0
-
-	var scanErr error
-	sc := scanner.Scanner{
-		Error: func(s *scanner.Scanner, msg string) {
-			if scanErr == nil {
-				scanErr = errors.New(msg)
-			}
-		},
+func writeFile(path string, lines []string) error {
+	b := strings.Builder{}
+	for _, l := range lines {
+		b.WriteString(l)
 	}
 
-	sc.Init(strings.NewReader(s))
-
-	for {
-		r := sc.Next()
-		if scanErr != nil {
-			return 0, scanErr
-		}
-
-		if r == scanner.EOF {
-			break
-		}
-
-		if r != ' ' {
-			break
-		}
-
-		c++
-	}
-
-	return c, nil
+	return ioutil.WriteFile(path, []byte(b.String()), 0644)
 }
 
 func newScanner(r io.Reader) *bufio.Scanner {
