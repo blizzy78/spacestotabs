@@ -18,18 +18,8 @@ type line struct {
 
 func main() {
 	flags := parseFlags()
-
-	errors := false
-
-	for _, p := range flags.paths {
-		err := convertFile(p, flags)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: error converting file: %v\n", p, err)
-			errors = true
-		}
-	}
-
-	if errors {
+	ok := convertFiles(flags.paths, flags)
+	if !ok {
 		os.Exit(1)
 	}
 }
@@ -38,6 +28,18 @@ func log(flags flags, p string, args ...interface{}) {
 	if !flags.quiet {
 		fmt.Printf(p, args...)
 	}
+}
+
+func convertFiles(paths []string, flags flags) bool {
+	ok := true
+	for _, p := range paths {
+		err := convertFile(p, flags)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: error converting file: %v\n", p, err)
+			ok = false
+		}
+	}
+	return ok
 }
 
 func convertFile(path string, flags flags) error {
